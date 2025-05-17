@@ -1,11 +1,12 @@
 import open3d as o3d
 import numpy as np
 import cv2
-from ultralytics import FastSAM
+from ultralytics import FastSAM # 假设此为正确的导入
 import torch
 import plotly.graph_objects as go
 import plotly.io as pio
-import traceback
+import time # 确保导入 time 模块
+import traceback # 虽然在这些函数中没直接用，但保持导入以防万一
 
 def create_point_cloud_from_depth_internal(depth_image, k_matrix, depth_scale_factor, rgb_image=None, image_height_config=480, image_width_config=640):
     fx = k_matrix[0, 0]; fy = k_matrix[1, 1]; cx = k_matrix[0, 2]; cy = k_matrix[1, 2]
@@ -83,8 +84,8 @@ def create_point_cloud_from_depth_internal(depth_image, k_matrix, depth_scale_fa
                     elif extracted_colors.ndim ==2 and extracted_colors.shape[1] == 3:
                         colors_for_pcd[valid_map_indices] = extracted_colors
                     pcd.colors = o3d.utility.Vector3dVector(colors_for_pcd)
-            except Exception: # Simplified error handling
-                # print(f"    [create_point_cloud_from_depth_internal] Warning: Error during color assignment: {e}. Point cloud will be uncolored.")
+            except Exception:
+                # print(f"    [create_point_cloud_from_depth_internal] 警告: 上色时出错. 点云将无颜色.")
                 pass
     return pcd, pixel_map
 
@@ -105,8 +106,7 @@ def save_point_cloud_to_html(point_clouds_dict, file_path, title="Point Cloud Vi
     elif isinstance(point_clouds_dict, dict):
         for name, pcd_item in point_clouds_dict.items():
             default_color_override = None
-            if not pcd_item.has_colors(): # Only apply default if no intrinsic colors
-                # print(f"    [save_point_cloud_to_html] '{name}' segment has no intrinsic colors. Applying default color.")
+            if not pcd_item.has_colors():
                 if name == 'table': default_color_override = 'rgb(0,165,237)'
                 elif name == 'hand': default_color_override = 'rgb(255,0,0)'
                 elif name == 'object': default_color_override = 'rgb(0,255,0)'
@@ -116,17 +116,13 @@ def save_point_cloud_to_html(point_clouds_dict, file_path, title="Point Cloud Vi
             trace = _generate_plotly_trace_from_o3d_pcd(pcd_item, marker_color=default_color_override, name=name)
             if trace: traces.append(trace)
     else:
-        # print(f"错误: save_point_cloud_to_html 需要 Open3D 点云或点云字典。输入类型: {type(point_clouds_dict)}")
         return
 
     if not traces:
-        # print(f"沒有有效的點雲軌跡可供可視化並保存到 {file_path}。")
         fig = go.Figure(layout=go.Layout(title=f"{title} (无数据)", scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z')))
         try:
             pio.write_html(fig, file_path, auto_open=False, full_html=True)
-            # print(f"空的点云可视化已保存到HTML文件: {file_path}")
-        except Exception: # Simplified error handling
-            # print(f"保存空的HTML文件 {file_path} 时出错: {e}");
+        except Exception:
             pass
         return
 
@@ -145,40 +141,44 @@ def save_point_cloud_to_html(point_clouds_dict, file_path, title="Point Cloud Vi
     try:
         pio.write_html(fig, file_path, auto_open=False, full_html=True)
         print(f"点云可视化已保存到HTML文件: {file_path}")
-    except Exception: # Simplified error handling
-        # print(f"保存HTML文件 {file_path} 时出错: {e}");
+    except Exception:
         pass
 
-def get_fastsam_masks_from_text(text_prompt, image_for_model, model_instance, device_to_use, image_size_for_fastsam, conf_threshold=0.25):
+def get_fastsam_masks_from_text(text_prompt, image_for_model, model_instance, device_to_use, image_size_for_fastsam, conf_threshold=0.25, parent_timing_prefix=""):
     if not text_prompt: return np.zeros(image_for_model.shape[:2], dtype=bool)
     try:
-        img_bgr_contiguous = image_for_model # Assume it's already preprocessed
+        img_bgr_contiguous = image_for_model
+
+        t_start_predict = time.time()
         results = model_instance.predict(source=img_bgr_contiguous, conf=conf_threshold, texts=[text_prompt], device=device_to_use, retina_masks=True, imgsz=image_size_for_fastsam, verbose=False)
+        t_end_predict = time.time()
+        # print(f"{parent_timing_prefix}    [子计时] FastSAM predict ('{text_prompt}') 耗时: {t_end_predict - t_start_predict:.4f} 秒")
+
         if results and results[0].masks is not None:
             all_masks_for_prompt = results[0].masks.data.cpu().numpy().astype(bool)
             if all_masks_for_prompt.ndim == 3 and all_masks_for_prompt.shape[0] > 0: return np.any(all_masks_for_prompt, axis=0)
             elif all_masks_for_prompt.ndim == 2: return all_masks_for_prompt
-        # print(f"FastSAM未能为 '{text_prompt}' 使用置信度 {conf_threshold} 生成有效掩码。")
         return np.zeros(image_for_model.shape[:2], dtype=bool)
     except Exception as e:
         # print(f"FastSAM使用文本提示 '{text_prompt}' 进行推理时发生未知错误: {e}")
         return np.zeros(image_for_model.shape[:2], dtype=bool)
 
-
 def segment_and_crop_with_fastsam(
     rgb_image_input, depth_image_input, camera_k_matrix, depth_processing_scale,
-    fastsam_model_instance, text_prompt_hand=None, text_prompt_object=None, text_prompt_table=None, # text_prompt_table is unused now but kept for signature consistency
+    fastsam_model_instance, text_prompt_hand=None, text_prompt_object=None, text_prompt_table=None,
     ransac_distance_thresh=0.015, device_for_fastsam=None, return_separate_segments=False,
     image_width_config_for_fastsam=640, image_height_config_for_fastsam=480,
     ground_removal_z_threshold=None,
-    return_debug_images=False, # Controls returning of 2D mask overlay images
-    fastsam_conf_hand=0.25, # Confidence for hand segmentation
-    fastsam_conf_object=0.25 # Confidence for object segmentation
+    return_debug_images=False,
+    fastsam_conf_hand=0.25,
+    fastsam_conf_object=0.25,
+    timing_prefix="  [分割裁剪计时]"
     ):
 
-    debug_images = {} # Initialize a dictionary to store debug images
+    overall_func_start_time = time.time()
+    debug_images = {}
 
-    # 1. Prepare RGB image (ensure BGR, uint8 for FastSAM and coloring)
+    
     image_for_processing = rgb_image_input.copy()
     if not np.issubdtype(image_for_processing.dtype, np.uint8):
         if np.issubdtype(image_for_processing.dtype, np.floating) and \
@@ -209,17 +209,20 @@ def segment_and_crop_with_fastsam(
         )
     else:
         image_bgr_for_fastsam_model = image_bgr_contiguous
+    # print(f"{timing_prefix} RGB图像准备和缩放 (FastSAM输入尺寸: {image_width_config_for_fastsam}x{image_height_config_for_fastsam}) 耗时: {time.time() - t_start_prep_rgb:.4f} 秒")
+
 
     if device_for_fastsam is None: effective_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else: effective_device = device_for_fastsam
 
-    # 2. Create initial colored point cloud
+    t_start_create_pcd_full = time.time()
     P_full, pcd_pixel_to_point_map = create_point_cloud_from_depth_internal(
         depth_image_input, camera_k_matrix, depth_processing_scale,
         rgb_image=image_bgr,
         image_height_config=depth_image_input.shape[0],
         image_width_config=depth_image_input.shape[1]
     )
+    # print(f"{timing_prefix} 初始 P_full (完整点云) 创建 耗时: {time.time() - t_start_create_pcd_full:.4f} 秒")
 
     empty_pcd_dict_no_table = {'hand': o3d.geometry.PointCloud(), 'object': o3d.geometry.PointCloud(), 'combined': o3d.geometry.PointCloud()}
 
@@ -228,6 +231,7 @@ def segment_and_crop_with_fastsam(
             return (empty_pcd_dict_no_table, debug_images) if return_debug_images else empty_pcd_dict_no_table
         return (o3d.geometry.PointCloud(), debug_images) if return_debug_images else o3d.geometry.PointCloud()
 
+    t_start_ground_removal = time.time()
     if ground_removal_z_threshold is not None:
         points_np_gr = np.asarray(P_full.points)
         colors_np_gr = np.asarray(P_full.colors) if P_full.has_colors() else None
@@ -236,26 +240,30 @@ def segment_and_crop_with_fastsam(
             P_full.points = o3d.utility.Vector3dVector(points_np_gr[height_filter_mask_gr])
             if P_full.has_colors() and colors_np_gr is not None:
                 P_full.colors = o3d.utility.Vector3dVector(colors_np_gr[height_filter_mask_gr])
-            pcd_pixel_to_point_map = pcd_pixel_to_point_map[height_filter_mask_gr]
+            if pcd_pixel_to_point_map.size > 0 and len(pcd_pixel_to_point_map) == len(height_filter_mask_gr): #确保长度一致
+                 pcd_pixel_to_point_map = pcd_pixel_to_point_map[height_filter_mask_gr]
+            else:
+                 pcd_pixel_to_point_map = np.array([])
         if not P_full.has_points():
             if return_separate_segments:
                 return (empty_pcd_dict_no_table, debug_images) if return_debug_images else empty_pcd_dict_no_table
             return (o3d.geometry.PointCloud(), debug_images) if return_debug_images else o3d.geometry.PointCloud()
+    # print(f"{timing_prefix} 地面移除 耗时: {time.time() - t_start_ground_removal:.4f} 秒")
 
     num_total_points_full = len(P_full.points)
     final_selection_indices_mask = np.zeros(num_total_points_full, dtype=bool)
 
-    # --- Hand Segmentation ---
+    t_start_hand_seg_full_part = time.time()
     hand_pcd_segment = o3d.geometry.PointCloud()
     best_mask_hand_2d = np.zeros(image_bgr_for_fastsam_model.shape[:2], dtype=bool)
     if text_prompt_hand and pcd_pixel_to_point_map.size > 0 :
-        best_mask_hand_2d = get_fastsam_masks_from_text(text_prompt_hand, image_bgr_for_fastsam_model, fastsam_model_instance, effective_device, image_width_config_for_fastsam, conf_threshold=fastsam_conf_hand)
+        best_mask_hand_2d = get_fastsam_masks_from_text(text_prompt_hand, image_bgr_for_fastsam_model, fastsam_model_instance, effective_device, image_width_config_for_fastsam, conf_threshold=fastsam_conf_hand, parent_timing_prefix=timing_prefix)
         if np.any(best_mask_hand_2d):
             if return_debug_images:
                 hand_mask_viz = image_bgr_for_fastsam_model.copy()
-                hand_mask_viz[best_mask_hand_2d] = [0, 255, 0] # Green for hand
+                hand_mask_viz[best_mask_hand_2d] = [0, 255, 0]
                 debug_images['hand_mask_overlay'] = hand_mask_viz
-            
+            t_start_hand_mask_proc = time.time()
             mask_hand_resized_to_depth_dims = cv2.resize(
                 best_mask_hand_2d.astype(np.uint8),
                 (depth_image_input.shape[1], depth_image_input.shape[0]),
@@ -272,18 +280,20 @@ def segment_and_crop_with_fastsam(
                 if p_full_indices_for_hand.size > 0 and np.all(p_full_indices_for_hand < num_total_points_full):
                     final_selection_indices_mask[p_full_indices_for_hand.astype(int)] = True
                     hand_pcd_segment = P_full.select_by_index(p_full_indices_for_hand.astype(int))
+            # print(f"{timing_prefix}    手部掩码后处理和点云选择 耗时: {time.time() - t_start_hand_mask_proc:.4f} 秒")
+    # print(f"{timing_prefix} 手部整体分割部分 (含提示: '{text_prompt_hand}') 耗时: {time.time() - t_start_hand_seg_full_part:.4f} 秒") # 打印传入的提示
 
-    # --- Object Segmentation ---
+    t_start_obj_seg_full_part = time.time()
     object_pcd_segment = o3d.geometry.PointCloud()
     best_mask_object_2d = np.zeros(image_bgr_for_fastsam_model.shape[:2], dtype=bool)
     if text_prompt_object and pcd_pixel_to_point_map.size > 0:
-        best_mask_object_2d = get_fastsam_masks_from_text(text_prompt_object, image_bgr_for_fastsam_model, fastsam_model_instance, effective_device, image_width_config_for_fastsam, conf_threshold=fastsam_conf_object)
+        best_mask_object_2d = get_fastsam_masks_from_text(text_prompt_object, image_bgr_for_fastsam_model, fastsam_model_instance, effective_device, image_width_config_for_fastsam, conf_threshold=fastsam_conf_object, parent_timing_prefix=timing_prefix)
         if np.any(best_mask_object_2d):
             if return_debug_images:
                 object_mask_viz = image_bgr_for_fastsam_model.copy()
-                object_mask_viz[best_mask_object_2d] = [0, 0, 255] # Red for object
+                object_mask_viz[best_mask_object_2d] = [0, 0, 255]
                 debug_images['object_mask_overlay'] = object_mask_viz
-
+            t_start_obj_mask_proc = time.time()
             mask_object_resized_to_depth_dims = cv2.resize(
                 best_mask_object_2d.astype(np.uint8),
                 (depth_image_input.shape[1], depth_image_input.shape[0]),
@@ -300,71 +310,80 @@ def segment_and_crop_with_fastsam(
                 if p_full_indices_for_object.size > 0 and np.all(p_full_indices_for_object < num_total_points_full):
                     final_selection_indices_mask[p_full_indices_for_object.astype(int)] = True
                     object_pcd_segment = P_full.select_by_index(p_full_indices_for_object.astype(int))
-    
+            # print(f"{timing_prefix}    物体掩码后处理和点云选择 耗时: {time.time() - t_start_obj_mask_proc:.4f} 秒")
+    # print(f"{timing_prefix} 物体整体分割部分 (含提示: '{text_prompt_object}') 耗时: {time.time() - t_start_obj_seg_full_part:.4f} 秒") # 打印传入的提示
+
     if return_debug_images and (np.any(best_mask_hand_2d) or np.any(best_mask_object_2d)):
         combined_mask_viz = image_bgr_for_fastsam_model.copy()
         if np.any(best_mask_hand_2d):
-            combined_mask_viz[best_mask_hand_2d] = [0,255,0] # Hand green
+            combined_mask_viz[best_mask_hand_2d] = [0,255,0]
         if np.any(best_mask_object_2d):
-            combined_mask_viz[best_mask_object_2d] = [0,0,255] # Object red (overwrites hand if overlapping)
+            combined_mask_viz[best_mask_object_2d] = [0,0,255]
         debug_images['combined_masks_overlay'] = combined_mask_viz
 
+    t_start_final_select_sor = time.time()
     final_selected_indices_from_mask = np.where(final_selection_indices_mask)[0]
     final_cropped_pcd = P_full.select_by_index(final_selected_indices_from_mask.astype(int))
 
     if final_cropped_pcd.has_points() and len(final_cropped_pcd.points) > 10:
+        t_start_sor = time.time()
         cl, ind = final_cropped_pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
         final_cropped_pcd = final_cropped_pcd.select_by_index(ind)
-        # To make separate segments also SOR'd, would need to re-select or apply SOR individually
-        # For now, only 'combined' is guaranteed to be SOR'd if segments are returned.
-        if return_separate_segments: # Update segments if they were part of SOR'd combined
-            if hand_pcd_segment.has_points():
-                # This is an approximation: select points from original hand_pcd_segment that are also in final_cropped_pcd
-                # A more robust way would be to re-run SAM mask logic on the SOR'd P_full if P_full was SOR'd,
-                # or apply SOR to each segment.
-                hand_points_original = np.asarray(hand_pcd_segment.points)
-                final_points_sor = np.asarray(final_cropped_pcd.points)
-                # Create a KDTree for faster lookup from final_points_sor
-                if len(final_points_sor) > 0:
-                    pcd_tree = o3d.geometry.KDTreeFlann(final_cropped_pcd)
-                    sor_hand_indices = []
-                    for point in hand_points_original:
-                        [k, idx, _] = pcd_tree.search_knn_vector_3d(point, 1)
-                        if k > 0 and np.linalg.norm(point - final_points_sor[idx[0]]) < 1e-6 : # check if point exists in SOR'd cloud
-                             sor_hand_indices.append(True)
-                        else:
-                             sor_hand_indices.append(False)
-                    if np.any(sor_hand_indices):
-                        hand_pcd_segment = hand_pcd_segment.select_by_index(np.where(sor_hand_indices)[0])
+        # print(f"{timing_prefix}    统计离群点移除 (SOR) 耗时: {time.time() - t_start_sor:.4f} 秒")
+
+        if return_separate_segments:
+            t_start_kdtree_filter = time.time()
+            final_points_sor_np = np.asarray(final_cropped_pcd.points)
+
+            num_hand_pts_before_kdtree = len(hand_pcd_segment.points) if hand_pcd_segment.has_points() else 0
+            num_obj_pts_before_kdtree = len(object_pcd_segment.points) if object_pcd_segment.has_points() else 0
+            # print(f"{timing_prefix}    KDTree同步前点数: 手部={num_hand_pts_before_kdtree}, 物体={num_obj_pts_before_kdtree}")
+
+            if len(final_points_sor_np) > 0:
+                pcd_tree_for_sor_filtered = o3d.geometry.KDTreeFlann(final_cropped_pcd)
+                if hand_pcd_segment.has_points():
+                    hand_points_original_np = np.asarray(hand_pcd_segment.points)
+                    sor_hand_indices_in_original_segment = []
+                    for point_idx in range(len(hand_points_original_np)):
+                        point_to_check = hand_points_original_np[point_idx]
+                        [k, idx_in_sor_cloud, _] = pcd_tree_for_sor_filtered.search_knn_vector_3d(point_to_check, 1)
+                        if k > 0 and np.linalg.norm(point_to_check - final_points_sor_np[idx_in_sor_cloud[0]]) < 1e-6 :
+                             sor_hand_indices_in_original_segment.append(point_idx)
+                    if sor_hand_indices_in_original_segment:
+                        hand_pcd_segment = hand_pcd_segment.select_by_index(sor_hand_indices_in_original_segment)
                     else:
-                        hand_pcd_segment = o3d.geometry.PointCloud() # No points left
-                else: # if final_cropped_pcd is empty after SOR
+                        hand_pcd_segment = o3d.geometry.PointCloud()
+                else:
                     hand_pcd_segment = o3d.geometry.PointCloud()
 
-            if object_pcd_segment.has_points():
-                object_points_original = np.asarray(object_pcd_segment.points)
-                if len(final_points_sor) > 0:
-                    pcd_tree = o3d.geometry.KDTreeFlann(final_cropped_pcd) # Re-use or re-create
-                    sor_object_indices = []
-                    for point in object_points_original:
-                        [k, idx, _] = pcd_tree.search_knn_vector_3d(point, 1)
-                        if k > 0 and np.linalg.norm(point - final_points_sor[idx[0]]) < 1e-6:
-                            sor_object_indices.append(True)
-                        else:
-                            sor_object_indices.append(False)
-                    if np.any(sor_object_indices):
-                        object_pcd_segment = object_pcd_segment.select_by_index(np.where(sor_object_indices)[0])
+                if object_pcd_segment.has_points():
+                    object_points_original_np = np.asarray(object_pcd_segment.points)
+                    sor_object_indices_in_original_segment = []
+                    for point_idx in range(len(object_points_original_np)):
+                        point_to_check = object_points_original_np[point_idx]
+                        [k, idx_in_sor_cloud, _] = pcd_tree_for_sor_filtered.search_knn_vector_3d(point_to_check, 1)
+                        if k > 0 and np.linalg.norm(point_to_check - final_points_sor_np[idx_in_sor_cloud[0]]) < 1e-6:
+                            sor_object_indices_in_original_segment.append(point_idx)
+                    if sor_object_indices_in_original_segment:
+                        object_pcd_segment = object_pcd_segment.select_by_index(sor_object_indices_in_original_segment)
                     else:
                         object_pcd_segment = o3d.geometry.PointCloud()
                 else:
                     object_pcd_segment = o3d.geometry.PointCloud()
+            else:
+                hand_pcd_segment = o3d.geometry.PointCloud()
+                object_pcd_segment = o3d.geometry.PointCloud()
+            # print(f"{timing_prefix}    KDTree同步SOR结果到手/物体点云段 耗时: {time.time() - t_start_kdtree_filter:.4f} 秒")
 
+    # print(f"{timing_prefix} 最终点云选择和SOR (及可选的子点云段更新) 耗时: {time.time() - t_start_final_select_sor:.4f} 秒")
 
     pcd_results_dict = {
         'hand': hand_pcd_segment,
         'object': object_pcd_segment,
         'combined': final_cropped_pcd
     }
+
+    # print(f"{timing_prefix} segment_and_crop_with_fastsam 函数总耗时: {time.time() - overall_func_start_time:.4f} 秒")
 
     if return_separate_segments:
         return (pcd_results_dict, debug_images) if return_debug_images else pcd_results_dict
