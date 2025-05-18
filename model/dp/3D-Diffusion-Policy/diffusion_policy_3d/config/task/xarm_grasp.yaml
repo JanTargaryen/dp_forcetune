@@ -1,0 +1,27 @@
+# 3D-Diffusion-Policy/diffusion_policy_3d/config/task/my_custom_robot_task.yaml
+name: xarm_grasp # 您可以自定义任务名称
+task_name: ${name}
+
+shape_meta:
+  obs:
+    point_cloud:
+      shape: [16384, 6] # NUM_POINTS_EXPECTED, 6 (XYZRGB)
+      type: point_cloud
+    agent_pos: # 对应您脚本中的 state_vector
+      shape: [37] 
+      type: low_dim
+  action:
+    shape: [7] # 3 (eef_pos_rel) + 3 (eef_rpy_rel) + 1 (gripper_ratio)
+
+dataset:
+  _target_: diffusion_policy_3d.dataset.xarm_dataset.XarmDataset
+  zarr_path: /data1/zhoufang/dataset_output/processed_data.zarr
+  horizon: ${horizon} # 从主配置继承
+  pad_before: ${eval:'${n_obs_steps}-1'} # 从主配置继承
+  pad_after: ${eval:'${n_action_steps}-1'} # 从主配置继承
+  seed: 42
+  val_ratio: 0.02 # 根据需要调整验证集比例
+  # max_train_episodes: null # 如果需要，可以限制训练的轨迹数量
+
+# 如果您在训练期间不进行仿真环境的评估，可以设置为 null
+env_runner: null

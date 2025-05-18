@@ -1,0 +1,106 @@
+# @package _group_
+# my_robot_task_dp3.yaml
+
+# Task name (used for logging, etc.)
+task_name: "xarm_inspire_grasp" # 您之前的任务名称
+
+# Observation modalities settings
+obs_modalities:
+  point_cloud:
+    obs_key: "data/point_cloud" 
+    shape: [16384, 6]         # 您之前的点云形状 (Np, xyzrgb)
+  agent_pos: # MODIFIED: 从 low_dim_state 重命名为 agent_pos 以匹配RealDexDataset默认键
+    obs_key: "data/state"     # Zarr内部状态数据的键路径保持不变
+    shape: [37]               # 您之前的state_vector维度
+
+# Key for action data in Zarr file
+action_key: "data/action"
+
+# Parameters related to data sequence length
+# These will be used by the dataset configuration below
+n_obs_steps: 2          
+n_action_steps: 8       
+past_action_visible: False 
+
+# Meta information about data shapes (crucial for the policy)
+shape_meta:
+  action:
+    shape: [7] # 您之前的action_vector维度
+  obs:
+    point_cloud: 
+      shape: [16384, 6] # 您之前的点云形状
+      type: "point_cloud" 
+    agent_pos: # MODIFIED: 从 low_dim_state 重命名为 agent_pos
+      shape: [37] # 您之前的state_vector维度
+      type: "low_dim" 
+
+# Dataset configuration
+dataset:
+  _target_: "diffusion_policy_3d.dataset.realdex_dataset.RealDexDataset" # UPDATED: 指定数据集类
+  zarr_path: "/data1/zhoufang/dataset_output/xarm_inspire_grasp_white_cube_v1.zarr" # 您之前的路径
+  
+  horizon: ${n_action_steps} # ADDED: 设置horizon为动作预测长度
+  
+  pad_before: ${eval:'${n_obs_steps}-1'}  # 为观察序列准备上下文
+  pad_after: ${eval:'${n_action_steps}-1'}   # 为动作序列准备上下文 (如果数据集类这样使用)
+  
+  seed: ${seed} # 从顶层配置继承seed
+  val_ratio: 0.02 # 验证集比例 (示例)
+  # max_train_episodes: null # 可选，限制训练时使用的最大轨迹数 (示例)
+
+# Policy to be used (保持您之前的配置，但仍需填充细节)
+policy:
+  _target_: diffusion_policy_3d.policy.dp3_policy.DP3Policy
+  backbone: "PointNet" 
+  n_obs_steps: ${n_obs_steps} 
+  n_action_steps: ${n_action_steps} 
+  obs_encoder_group_name: "group1" # 确保这个组在策略配置中定义正确
+  obs_dim: null 
+  action_dim: ${shape_meta.action.shape}[0] 
+  num_diffusion_iters: 100
+  noise_scheduler:
+    _target_: diffusers.schedulers.scheduling_ddpm.DDPMScheduler
+    num_train_timesteps: ${policy.num_diffusion_iters}
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: "squaredcos_cap_v2" 
+    variance_type: "fixed_small" 
+    clip_sample: True 
+    prediction_type: "epsilon" 
+
+# Training parameters (保持您之前的配置，但仍需填充细节)
+training:
+  batch_size: 32
+  num_epochs: 2000
+  learning_rate: 1.0e-4
+  optimizer:
+    _target_: torch.optim.AdamW
+    lr: ${training.learning_rate}
+    weight_decay: 1.0e-6
+    betas: [0.95, 0.999]
+  grad_clip_norm: 1.0
+  lr_scheduler:
+    _target_: torch.optim.lr_scheduler.ReduceLROnPlateau
+    factor: 0.8
+    patience: 100
+    verbose: True
+
+# Data normalization (非常重要 - 您需要根据您的数据集计算这些值)
+data_normalization:
+  point_cloud:
+    mean: [0.0, 0.0, 0.0, 0.5, 0.5, 0.5] # 示例: XYZ均值0, RGB均值0.5 (假设RGB在0-1范围)
+    std:  [0.2, 0.2, 0.2, 0.25, 0.25, 0.25] # 示例: XYZ标准差0.2, RGB标准差0.25
+  agent_pos: # UPDATED: 键名与obs_modalities和shape_meta保持一致
+    mean: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] # 长度为37的数组，示例全0
+    std:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # 长度为37的数组，示例全1
+  action:
+    mean: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0] # 长度为7的数组，示例全0
+    std:  [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]  # 长度为7的数组，示例全1
+
+# Logging
+logging:
+  project: "DP3_xarm_inspire_grasp" # 建议修改为您的W&B项目名
+  group: ${task_name}
+
+# Seed for reproducibility
+seed: 42
