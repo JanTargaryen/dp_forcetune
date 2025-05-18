@@ -1,5 +1,4 @@
 *.png
 *.html
-model/dp3/
 model/FastSAM-x.pt
 **/__pycache__/

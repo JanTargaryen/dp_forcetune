@@ -6,11 +6,11 @@ import os
 try:
     available_gpus = gpu_utl.get_least_used_gpu()
     if available_gpus:
-        TARGET_GPU_ID = available_gpus[-1] 
+        TARGET_GPU_ID = available_gpus[-1]
         print(f"myUtil.gpu_utl 检测到最空闲的GPU ID: {TARGET_GPU_ID}")
     else:
         print("警告: myUtil.gpu_utl 未返回可用GPU ID，将尝试默认行为 (GPU 0)。")
-        TARGET_GPU_ID = "0" 
+        TARGET_GPU_ID = "0"
 
     os.environ["CUDA_VISIBLE_DEVICES"] = TARGET_GPU_ID
     print(f"已设置 CUDA_VISIBLE_DEVICES='{TARGET_GPU_ID}'。")
@@ -30,7 +30,7 @@ import torch # 主脚本中设置DEVICE和预热需要
 import time
 import traceback
 import open3d as o3d
-import zarr 
+import zarr
 from typing import Tuple, Dict
 from scipy.spatial.transform import Rotation as R_scipy
 import shutil
@@ -43,7 +43,7 @@ import sys
 
 # --- DEVICE 定义修正 ---
 if torch.cuda.is_available():
-    DEVICE = torch.device("cuda:0") 
+    DEVICE = torch.device("cuda:0")
     print(f"PyTorch 检测到 CUDA 可用。")
     print(f"  将使用的PyTorch设备: {DEVICE}")
     try:
@@ -60,12 +60,12 @@ else:
 
 
 NUM_POINTS_EXPECTED = 16384
-OUTPUT_ZARR_PATH = '/data1/zhoufang/dataset_output/processed_data.zarr' 
+OUTPUT_ZARR_PATH = '/data1/zhoufang/dataset_output/processed_data.zarr'
 DATA_DIR = '/data1/zhoufang/dataset/collected_data'
-MIN_FRAMES_PER_TRAJECTORY = 50 
-IMAGE_WIDTH_CONFIG = 640 
+MIN_FRAMES_PER_TRAJECTORY = 50
+IMAGE_WIDTH_CONFIG = 640
 IMAGE_HEIGHT_CONFIG = 480
-FASTSAM_MODEL_PATH = './model/FastSAM-x.pt' 
+FASTSAM_MODEL_PATH = './model/FastSAM-x.pt'
 DEFAULT_TEXT_PROMPT_HAND = "robotic gripper with fingers"
 DEFAULT_TEXT_PROMPT_OBJECT = "table"
 DEPTH_SCALE = 1.0
@@ -128,7 +128,7 @@ def main():
             print(f"  FastSAM模型预热时出错: {e_warmup}")
             print(f"  请检查选定GPU (通过 CUDA_VISIBLE_DEVICES 设置为 {os.environ.get('CUDA_VISIBLE_DEVICES', '未设置')}) 是否有足够显存。")
             traceback.print_exc()
-    
+
     trajectory_files = []
     abs_data_dir = os.path.abspath(DATA_DIR)
     if not os.path.isdir(abs_data_dir):
@@ -149,7 +149,7 @@ def main():
         # 这里可以复制主循环中处理单帧的部分逻辑用于测试
         # ... (调试代码) ...
         print("调试模式结束。")
-        return 
+        return
 
     # --- Zarr 文件处理主循环 ---
     print(f"\n[主循环] 开始处理全部 {len(trajectory_files)} 条轨迹...")
@@ -167,20 +167,20 @@ def main():
     zarr_root = zarr.open_group(OUTPUT_ZARR_PATH, mode='a')
     data_group = zarr_root.require_group('data')
     meta_group = zarr_root.require_group('meta')
-    
+
     episode_ends_list = []
     current_total_frames_in_zarr = 0
     pc_dataset, state_dataset, action_dataset = None, None, None
     first_trajectory_successfully_written = False # 用于标记是否已初始化Zarr数据集
 
-    main_loop_conf_hand = 0.25 
+    main_loop_conf_hand = 0.25
     main_loop_conf_object = 0.25
     print(f"[主循环] FastSAM置信度: 手={main_loop_conf_hand}, 物体={main_loop_conf_object}")
     main_loop_imgsz_w = IMAGE_WIDTH_CONFIG
     main_loop_imgsz_h = IMAGE_HEIGHT_CONFIG
 
     processed_traj_count = 0
-    skipped_traj_count = 0 
+    skipped_traj_count = 0
 
     for i, traj_file_path in enumerate(trajectory_files):
         current_traj_dir = os.path.dirname(traj_file_path)
@@ -195,14 +195,14 @@ def main():
             print(f"    警告: 加载轨迹 {i+1} JSON ({os.path.basename(traj_file_path)}) 失败: {e_load_json_main}，跳过。")
             skipped_traj_count += 1
             continue
-        
+
         current_traj_pc_list = []
         current_traj_states_list = []
         current_traj_actions_list = []
-        
-        initial_frames_skipped_in_traj = 0 
-        pcd_processing_attempted_in_traj = 0 
-        zero_pcd_frames_in_traj = 0          
+
+        initial_frames_skipped_in_traj = 0
+        pcd_processing_attempted_in_traj = 0
+        zero_pcd_frames_in_traj = 0
 
         for frame_idx, frame_data in enumerate(raw_trajectory_data):
             # print(f"  处理轨迹 {i+1}, 帧 {frame_idx+1}/{len(raw_trajectory_data)}")
@@ -211,7 +211,7 @@ def main():
                 'joint_positions': list, 'joint_velocities': list,
                 'eef_target_position_relative_to_base': list,
                 'eef_target_orientation_relative_to_base_xyzw': list,
-                'gripper_openness_ratio': (float, int), 
+                'gripper_openness_ratio': (float, int),
                 'object_position_relative_to_base': list,
                 'object_orientation_relative_to_base_xyzw': list
             }
@@ -219,23 +219,23 @@ def main():
             missing_keys_info = []
             for key, exp_type in required_keys.items():
                 val = frame_data.get(key)
-                if val is None: 
+                if val is None:
                     valid_frame = False; missing_keys_info.append(f"缺失键'{key}'"); break
-                if isinstance(exp_type, tuple): 
-                    if not any(isinstance(val, t) for t in exp_type): 
+                if isinstance(exp_type, tuple):
+                    if not any(isinstance(val, t) for t in exp_type):
                         valid_frame = False; missing_keys_info.append(f"键'{key}'类型错误(应为{exp_type},实为{type(val)})"); break
-                elif not isinstance(val, exp_type): 
+                elif not isinstance(val, exp_type):
                     valid_frame = False; missing_keys_info.append(f"键'{key}'类型错误(应为{exp_type},实为{type(val)})"); break
-            if not valid_frame: 
+            if not valid_frame:
                 # print(f"    轨迹 {i+1}, 帧 {frame_idx}: 数据格式无效 ({'; '.join(missing_keys_info)})，跳过此帧。")
                 initial_frames_skipped_in_traj += 1
                 continue
-            
+
             k_matrix = np.array(frame_data['camera_K_matrix'], dtype=np.float32)
-            if k_matrix.shape != (3,3): 
+            if k_matrix.shape != (3,3):
                 # print(f"    轨迹 {i+1}, 帧 {frame_idx}: K矩阵形状无效，跳过此帧。")
                 initial_frames_skipped_in_traj += 1; continue
-            
+
             depth_path = os.path.join(current_traj_dir, frame_data['depth_image_path'])
             rgb_path = os.path.join(current_traj_dir, frame_data['rgb_image_path'])
             try:
@@ -245,36 +245,36 @@ def main():
                     # print(f"    轨迹 {i+1}, 帧 {frame_idx}: 图像/深度图尺寸不匹配，跳过此帧。")
                     initial_frames_skipped_in_traj += 1; continue
                 if not np.issubdtype(depth_np.dtype, np.floating): depth_np = depth_np.astype(np.float32)
-            except FileNotFoundError: 
+            except FileNotFoundError:
                 # print(f"    轨迹 {i+1}, 帧 {frame_idx}: 深度图或RGB图像文件未找到，跳过此帧。")
                 initial_frames_skipped_in_traj += 1; continue
-            except Exception as e_load_img: 
+            except Exception as e_load_img:
                 # print(f"    轨迹 {i+1}, 帧 {frame_idx}: 加载图像时出错 ({e_load_img})，跳过此帧。")
                 initial_frames_skipped_in_traj += 1; continue
-            
+
             rgb_input_main_uint8 = rgb_np_loaded.copy()
             if not np.issubdtype(rgb_input_main_uint8.dtype, np.uint8):
                 if np.issubdtype(rgb_input_main_uint8.dtype, np.floating) and rgb_input_main_uint8.max()<=1.0 and rgb_input_main_uint8.min()>=0.0:
                     rgb_input_main_uint8=(rgb_input_main_uint8*255).astype(np.uint8)
                 elif np.issubdtype(rgb_input_main_uint8.dtype, np.integer) and rgb_input_main_uint8.max() > 255: # e.g. uint16
                      rgb_input_main_uint8 = (rgb_input_main_uint8 / np.max(rgb_input_main_uint8) * 255).astype(np.uint8) # Normalize and convert
-                else: 
+                else:
                     rgb_input_main_uint8=np.clip(rgb_input_main_uint8,0,255).astype(np.uint8)
 
 
-            if rgb_input_main_uint8.ndim == 3 and rgb_input_main_uint8.shape[2] == 4: 
+            if rgb_input_main_uint8.ndim == 3 and rgb_input_main_uint8.shape[2] == 4:
                 rgb_bgr_main = cv2.cvtColor(rgb_input_main_uint8, cv2.COLOR_RGBA2BGR)
             elif rgb_input_main_uint8.ndim == 3 and rgb_input_main_uint8.shape[2] == 3:
                 rgb_bgr_main = cv2.cvtColor(rgb_input_main_uint8, cv2.COLOR_RGB2BGR)
-            elif rgb_input_main_uint8.ndim == 2: 
+            elif rgb_input_main_uint8.ndim == 2:
                 rgb_bgr_main = cv2.cvtColor(rgb_input_main_uint8, cv2.COLOR_GRAY2BGR)
-            else: 
+            else:
                 # print(f"    轨迹 {i+1}, 帧 {frame_idx}: RGB图像格式无法转换为BGR，跳过此帧。")
                 initial_frames_skipped_in_traj += 1; continue
-            
+
             pcd_processing_attempted_in_traj += 1
             sampled_points_np = np.zeros((NUM_POINTS_EXPECTED, 6), dtype=np.float32) # 默认为全零
-            
+
             try:
                 # print(f"    轨迹 {i+1}, 帧 {frame_idx}: 调用 external_point_cloud_processor...")
                 processed_o3d_pcd = external_point_cloud_processor(
@@ -284,28 +284,28 @@ def main():
                     fastsam_model_instance=fastsam_model_instance,
                     text_prompt_hand=DEFAULT_TEXT_PROMPT_HAND,
                     text_prompt_object=DEFAULT_TEXT_PROMPT_OBJECT,
-                    device_for_fastsam=DEVICE, 
-                    return_separate_segments=False, 
+                    device_for_fastsam=DEVICE,
+                    return_separate_segments=False,
                     image_width_config_for_fastsam=main_loop_imgsz_w,
                     image_height_config_for_fastsam=main_loop_imgsz_h,
-                    ground_removal_z_threshold=None, 
+                    ground_removal_z_threshold=None,
                     return_debug_images=False,
                     fastsam_conf_hand=main_loop_conf_hand,
                     fastsam_conf_object=main_loop_conf_object,
-                    timing_prefix=f"Traj{i+1}_Frm{frame_idx}_" 
+                    timing_prefix=f"Traj{i+1}_Frm{frame_idx}_"
                 )
-                
+
                 if processed_o3d_pcd and processed_o3d_pcd.has_points():
                     points_xyz = np.asarray(processed_o3d_pcd.points, dtype=np.float32)
-                    if processed_o3d_pcd.has_colors(): 
+                    if processed_o3d_pcd.has_colors():
                         points_rgb = np.asarray(processed_o3d_pcd.colors, dtype=np.float32)
-                    else: 
+                    else:
                         points_rgb = np.full((points_xyz.shape[0], 3), 0.5, dtype=np.float32) # 默认灰色
-                    
+
                     if points_xyz.shape[0] > 0:
                         points_xyzrgb = np.hstack((points_xyz, points_rgb))
                         num_curr = points_xyzrgb.shape[0]
-                        
+
                         if num_curr >= NUM_POINTS_EXPECTED: # 等于或大于期望点数，进行下采样
                             indices = np.random.choice(num_curr, NUM_POINTS_EXPECTED, replace=False)
                             sampled_points_np = points_xyzrgb[indices]
@@ -317,16 +317,16 @@ def main():
 
             except Exception as e_pcd_proc_main_loop:
                 print(f"    !!!!!! 轨迹 {i+1}, 帧 {frame_idx}: 在点云处理或采样中发生异常: {e_pcd_proc_main_loop} !!!!!!")
-                traceback.print_exc() 
+                traceback.print_exc()
                 # sampled_points_np 保持为全零
-            
+
             # 点云检查 (移到点云处理逻辑之后)
-            is_effectively_zero = np.all(np.abs(sampled_points_np) < 1e-9) 
+            is_effectively_zero = np.all(np.abs(sampled_points_np) < 1e-9)
 
             if is_effectively_zero:
                 # print(f"    警告: 轨迹 {i+1}, 帧 {frame_idx}: 点云数据被判定为全零或几乎全零，跳过此帧。")
                 zero_pcd_frames_in_traj += 1
-                continue 
+                continue
             else:
                 # 点云有效，尝试构建 state 和 action
                 try:
@@ -336,7 +336,7 @@ def main():
                     gripper_state_np = np.array([frame_data['gripper_openness_ratio']], dtype=np.float32)
                     obj_pos_rel_list = frame_data['object_position_relative_to_base']
                     obj_ori_rel_list_xyzw = frame_data['object_orientation_relative_to_base_xyzw']
-                    
+
                     if not (isinstance(obj_ori_rel_list_xyzw, (list, tuple)) and len(obj_ori_rel_list_xyzw) == 4):
                         raise ValueError(f"object_orientation_relative_to_base_xyzw 格式不正确: {obj_ori_rel_list_xyzw}")
                     obj_ori_rel_quat_obj = gymapi.Quat(*obj_ori_rel_list_xyzw)
@@ -349,7 +349,7 @@ def main():
                         np.array(obj_ori_rel_rpy_list, dtype=np.float32),   # 也保存RPY，根据需要选择使用
                         gripper_state_np
                     ]).astype(np.float32)
-                    
+
                     # --- 定义 action_vector ---
                     target_eef_p_rel_list = frame_data['eef_target_position_relative_to_base']
                     target_eef_r_rel_list_xyzw = frame_data['eef_target_orientation_relative_to_base_xyzw']
@@ -369,21 +369,12 @@ def main():
 
                     # 只有当点云、state_vector 和 action_vector 都成功定义后，才添加所有数据
                     current_traj_pc_list.append(sampled_points_np)
-                    current_traj_states_list.append(state_vector) 
+                    current_traj_states_list.append(state_vector)
                     current_traj_actions_list.append(action_vector)
 
                 except KeyError as ke:
                     print(f"    !!!!!! 轨迹 {i+1}, 帧 {frame_idx}: 定义state/action组件时发生 KeyError: {ke}。此帧数据将不完整，不予添加。 !!!!!!")
-                    # 因为点云可能已判断为有效，但state/action构建失败，所以不能简单跳过，而是不添加任何数据
-                    # 确保此帧的任何部分都不被加入最终列表。由于 sampled_points_np 在此 try 块之外，
-                    # 如果这里出错，点云可能已被添加，但状态和动作未被添加。
-                    # 更好的做法是将 current_traj_pc_list.append 也移入这个 try 块，
-                    # 或者在此处回滚（如果 current_traj_pc_list 已添加）。
-                    # 当前设计：如果state/action构建失败，则该帧的点云也不会被使用。
-                    # 因此，如果上面已经将 sampled_points_np 加入了列表，这里需要移除。
-                    # 为了简化，我们将所有 append 操作都放在 try 成功之后。
-                    # （上面的代码已调整，将 append 移到 try 块内）
-                    pass 
+                    pass
                 except ValueError as ve:
                     print(f"    !!!!!! 轨迹 {i+1}, 帧 {frame_idx}: 定义state/action组件时发生 ValueError: {ve}。此帧数据将不完整，不予添加。 !!!!!!")
                     pass
@@ -391,11 +382,10 @@ def main():
                     print(f"    !!!!!! 轨迹 {i+1}, 帧 {frame_idx}: 定义state/action组件时发生未知错误: {e_state_action}。此帧数据将不完整，不予添加。 !!!!!!")
                     traceback.print_exc()
                     pass
-        
-        # --- 单条轨迹内帧循环结束 ---
-        # ***** 这是之前讨论的重复代码块，已被删除 *****
 
-        valid_frames_collected_in_traj = len(current_traj_pc_list) 
+        # --- 单条轨迹内帧循环结束 ---
+
+        valid_frames_collected_in_traj = len(current_traj_pc_list)
         # 确保三个列表长度一致
         if not (len(current_traj_pc_list) == len(current_traj_states_list) == len(current_traj_actions_list)):
             print(f"    !!!!!! 严重错误: 轨迹 {i+1} 内部数据列表长度不一致! "
@@ -405,22 +395,22 @@ def main():
             continue
 
 
-        if pcd_processing_attempted_in_traj > 0: 
+        if pcd_processing_attempted_in_traj > 0:
             zero_pcd_frame_ratio = zero_pcd_frames_in_traj / pcd_processing_attempted_in_traj
             if zero_pcd_frame_ratio > 0.30: # 如果超过30%的点云处理尝试结果是全零，则放弃该轨迹
                 print(f"    警告: 轨迹 {i+1} ({os.path.basename(traj_file_path)}) 因点云全零帧过多而被放弃。")
                 print(f"      (尝试处理 {pcd_processing_attempted_in_traj} 帧, 其中 {zero_pcd_frames_in_traj} 帧点云为零, "
                       f"比例: {zero_pcd_frame_ratio*100:.2f}%)")
                 skipped_traj_count += 1
-                continue 
-        
+                continue
+
         if initial_frames_skipped_in_traj > 0 or zero_pcd_frames_in_traj > 0 :
              print(f"    轨迹 {i+1} ({os.path.basename(traj_file_path)}) 统计: "
                    f"初步跳过 {initial_frames_skipped_in_traj} 帧 (格式/文件问题), "
                    f"点云处理尝试 {pcd_processing_attempted_in_traj} 帧, "
                    f"其中点云为零 {zero_pcd_frames_in_traj} 帧. "
                    f"最终有效帧数 (点云、状态、动作均有效): {valid_frames_collected_in_traj}.")
-        
+
         if valid_frames_collected_in_traj < MIN_FRAMES_PER_TRAJECTORY:
             if valid_frames_collected_in_traj > 0 or initial_frames_skipped_in_traj > 0 or zero_pcd_frames_in_traj > 0 : # 仅当有活动时打印
                 print(f"    轨迹 {i+1} ({os.path.basename(traj_file_path)}): 有效帧数 {valid_frames_collected_in_traj} < 最低要求 {MIN_FRAMES_PER_TRAJECTORY}，跳过此轨迹。")
@@ -428,9 +418,9 @@ def main():
                 print(f"    轨迹 {i+1} ({os.path.basename(traj_file_path)}): 没有收集到有效帧数据，跳过此轨迹。")
             skipped_traj_count += 1
             continue
-        
+
         # 只有当确实有有效数据可写时才继续
-        if valid_frames_collected_in_traj > 0: 
+        if valid_frames_collected_in_traj > 0:
             traj_pc_np = np.array(current_traj_pc_list, dtype=np.float32)
             traj_state_np = np.array(current_traj_states_list, dtype=np.float32)
             traj_action_np = np.array(current_traj_actions_list, dtype=np.float32)
@@ -439,16 +429,16 @@ def main():
                 # 初始化Zarr数据集，只在第一次写入有效轨迹时执行
                 pc_shape = (0, NUM_POINTS_EXPECTED, 6); pc_chunks = (1, NUM_POINTS_EXPECTED, 6) # 针对点云优化chunks
                 pc_dataset = data_group.require_dataset('point_cloud', shape=pc_shape, chunks=pc_chunks, dtype='float32', exact=False, compressor=zarr.Blosc(cname='zstd', clevel=3, shuffle=zarr.Blosc.BITSHUFFLE))
-                
+
                 state_dim = traj_state_np.shape[1]; state_shape = (0, state_dim); state_chunks = (min(100, valid_frames_collected_in_traj), state_dim) # 较小的chunks适合state/action
                 state_dataset = data_group.require_dataset('state', shape=state_shape, chunks=state_chunks, dtype='float32', exact=False, compressor=zarr.Blosc(cname='zstd', clevel=3, shuffle=zarr.Blosc.BITSHUFFLE))
-                
+
                 action_dim = traj_action_np.shape[1]; action_shape = (0, action_dim); action_chunks = (min(100, valid_frames_collected_in_traj), action_dim)
                 action_dataset = data_group.require_dataset('action', shape=action_shape, chunks=action_chunks, dtype='float32', exact=False, compressor=zarr.Blosc(cname='zstd', clevel=3, shuffle=zarr.Blosc.BITSHUFFLE))
-                
+
                 print(f"    Zarr数据集已初始化。State dim: {state_dim}, Action dim: {action_dim}")
                 first_trajectory_successfully_written = True
-            
+
             # 确保数据集已创建 (如果不是第一次写入，则它们应该已存在)
             if pc_dataset is None: pc_dataset = data_group['point_cloud']
             if state_dataset is None: state_dataset = data_group['state']
@@ -460,24 +450,29 @@ def main():
                 action_dataset.append(traj_action_np)
             except Exception as e_zarr_append_main:
                 print(f"    错误: 追加数据到Zarr失败 (轨迹 {i+1}): {e_zarr_append_main}")
-                skipped_traj_count += 1 
+                skipped_traj_count += 1
                 # 发生错误时，不更新 episode_ends_list 和 current_total_frames_in_zarr
                 continue # 跳到下一条轨迹
 
             current_total_frames_in_zarr += valid_frames_collected_in_traj
-            episode_ends_list.append(current_total_frames_in_zarr - 1) # 存储的是全局帧索引
+            # #############################################
+            # ############### 修改点 #####################
+            # #############################################
+            episode_ends_list.append(current_total_frames_in_zarr) # 存储的是累积总帧数
+            # #############################################
             processed_traj_count += 1
             print(f"    轨迹 {i+1} 处理完毕并添加。有效帧数: {valid_frames_collected_in_traj}。当前Zarr总有效帧数: {current_total_frames_in_zarr}")
 
             if processed_traj_count > 0 and (processed_traj_count % 10 == 0 or i == len(trajectory_files) -1) :
                  print(f"  已处理 {processed_traj_count} 条有效轨迹。")
-    
+
     if not first_trajectory_successfully_written: # 如果没有任何轨迹被成功写入
         print("[主循环] 错误：没有有效轨迹被处理并写入Zarr文件。")
         # 如果Zarr目录已创建但为空，可以考虑删除它
         if os.path.exists(OUTPUT_ZARR_PATH) and os.path.isdir(OUTPUT_ZARR_PATH):
             try:
-                if not os.listdir(OUTPUT_ZARR_PATH): # 检查目录是否为空
+                # 检查目录是否为空 (更可靠的方式是尝试列出内容)
+                if not any(os.scandir(OUTPUT_ZARR_PATH)):
                     shutil.rmtree(OUTPUT_ZARR_PATH)
                     print(f"  已删除空的Zarr目录: {OUTPUT_ZARR_PATH}")
             except Exception as e_del_empty_zarr:
@@ -488,6 +483,9 @@ def main():
     if 'episode_ends' in meta_group: del meta_group['episode_ends'] # 如果已存在则先删除
     if episode_ends_list: # 确保列表不为空
         meta_group.create_dataset('episode_ends', data=np.array(episode_ends_list, dtype=np.int64), chunks=(min(1000, len(episode_ends_list)),)) # 适合 episode_ends 的 chunks
+    else:
+        print("警告: episode_ends_list 为空，没有元数据被保存到 meta/episode_ends。")
+
 
     print(f"\n[计时] Zarr文件处理主循环耗时: {time.time() - main_loop_start_time:.2f} 秒")
     print("\n数据转换完成。")
@@ -499,26 +497,33 @@ def main():
     if pc_dataset is not None : print(f"点云数据集最终形状: {pc_dataset.shape}, 分块: {pc_dataset.chunks}")
     if state_dataset is not None : print(f"状态数据集最终形状: {state_dataset.shape}, 分块: {state_dataset.chunks}")
     if action_dataset is not None : print(f"动作数据集最终形状: {action_dataset.shape}, 分块: {action_dataset.chunks}")
-    if episode_ends_list and 'episode_ends' in meta_group: 
+    
+    if episode_ends_list and 'episode_ends' in meta_group and meta_group['episode_ends'].size > 0:
         print(f"片段结束点 ({len(episode_ends_list)}条轨迹) 最后5条: {meta_group['episode_ends'][-5:]}")
     elif episode_ends_list:
-        print(f"片段结束点 ({len(episode_ends_list)}条轨迹) 最后5条: {np.array(episode_ends_list, dtype=np.int64)[-5:]} (未写入meta)")
+        print(f"片段结束点 ({len(episode_ends_list)}条轨迹) 最后5条: {np.array(episode_ends_list, dtype=np.int64)[-5:]} (元数据中可能未正确写入或为空)")
+    else:
+        print("片段结束点列表为空。")
 
 
     print(f"\n[计时] 脚本总运行耗时: {time.time() - overall_start_time:.2f} 秒")
-    print(f"\n数据成功写入Zarr文件: {OUTPUT_ZARR_PATH}");
-    print("Zarr文件结构 (顶层):");
-    try:
-        # 打印最终的Zarr文件结构
-        for item_name in zarr_root.keys():
-            item_obj = zarr_root[item_name]
-            print(f"  - {'Group' if isinstance(item_obj, zarr.hierarchy.Group) else 'Array'}: {item_name}")
-            if isinstance(item_obj, zarr.hierarchy.Group):
-                for sub_item_name in item_obj.keys():
-                    sub_item_obj = item_obj[sub_item_name]
-                    print(f"    - {'Group' if isinstance(sub_item_obj, zarr.hierarchy.Group) else 'Array'}: {sub_item_name}, Shape: {getattr(sub_item_obj, 'shape', 'N/A')}, Chunks: {getattr(sub_item_obj, 'chunks', 'N/A')}, Dtype: {getattr(sub_item_obj, 'dtype', 'N/A')}")
-    except Exception as e_zarr_tree:
-        print(f"打印Zarr树信息时出错: {e_zarr_tree}")
+    if first_trajectory_successfully_written: # 仅当有数据写入时才打印成功
+        print(f"\n数据成功写入Zarr文件: {OUTPUT_ZARR_PATH}");
+        print("Zarr文件结构 (顶层):");
+        try:
+            # 打印最终的Zarr文件结构
+            for item_name in zarr_root.keys():
+                item_obj = zarr_root[item_name]
+                print(f"  - {'Group' if isinstance(item_obj, zarr.hierarchy.Group) else 'Array'}: {item_name}")
+                if isinstance(item_obj, zarr.hierarchy.Group):
+                    for sub_item_name in item_obj.keys():
+                        sub_item_obj = item_obj[sub_item_name]
+                        print(f"    - {'Group' if isinstance(sub_item_obj, zarr.hierarchy.Group) else 'Array'}: {sub_item_name}, Shape: {getattr(sub_item_obj, 'shape', 'N/A')}, Chunks: {getattr(sub_item_obj, 'chunks', 'N/A')}, Dtype: {getattr(sub_item_obj, 'dtype', 'N/A')}")
+        except Exception as e_zarr_tree:
+            print(f"打印Zarr树信息时出错: {e_zarr_tree}")
+    else:
+        print(f"没有数据成功写入Zarr文件: {OUTPUT_ZARR_PATH}")
+
 
 if __name__ == '__main__':
     main()
